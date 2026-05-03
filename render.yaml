@@ -1,0 +1,46 @@
+# render.yaml — Configuración de infraestructura para Render
+# Este archivo es opcional. Puedes configurar todo manualmente en el dashboard de Render.
+# Si prefieres usarlo, ponlo en la raíz del repositorio y Render detecta los servicios automáticamente.
+
+services:
+  # --- Backend (FastAPI) ---
+  - type: web
+    name: arquicontrol-api
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: "cd backend && chmod +x build.sh && ./build.sh"
+    startCommand: "cd backend && uvicorn server:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: MONGO_URL
+        sync: false  # Se configura manualmente en el dashboard de Render
+      - key: DB_NAME
+        value: arquicontrol
+      - key: CORS_ORIGINS
+        sync: false  # Se llena con la URL del frontend una vez desplegado
+      - key: JWT_SECRET_KEY
+        generateValue: true  # Render genera un valor aleatorio automáticamente
+      - key: UPLOADS_DIR
+        value: ./uploads
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+  # --- Frontend (React static build) ---
+  - type: web
+    name: arquicontrol-web
+    runtime: static
+    region: oregon
+    plan: free
+    buildCommand: "cd frontend && yarn install && yarn build"
+    staticPublishPath: frontend/build
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: REACT_APP_BACKEND_URL
+        sync: false  # Se llena con la URL del backend una vez desplegado
