@@ -9,30 +9,24 @@ class ClienteService:
     def __init__(self, repository: ClienteRepository):
         self.repository = repository
 
-    async def list_all(self) -> list[ClienteResponse]:
-        return [ClienteResponse(**item) for item in await self.repository.list_all()]
+    async def list_all(self, user_id: str) -> list[ClienteResponse]:
+        return [ClienteResponse(**item) for item in await self.repository.list_all(user_id)]
 
-    async def create(self, payload: ClienteCreate) -> ClienteResponse:
-        existing_client = await self.repository.get_by_document(payload.numeroDocumento)
-        if existing_client:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Ya existe un cliente con ese documento",
-            )
-
-        client_data = {**payload.model_dump(), **create_audit_fields()}
-        created = await self.repository.create(client_data)
+    async def create(self, payload: ClienteCreate, user_id: str) -> ClienteResponse:
+        existing = await self.repository.get_by_document(payload.numeroDocumento, user_id)
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cliente ya registrado con ese documento")
+        data = {**payload.model_dump(), **create_audit_fields(), "userId": user_id}
+        created = await self.repository.create(data)
         return ClienteResponse(**created)
 
-    async def update(self, client_id: str, payload: ClienteUpdate) -> ClienteResponse:
+    async def update(self, client_id: str, payload: ClienteUpdate, user_id: str) -> ClienteResponse:
         current = await self.repository.get_by_id(client_id)
-        if not current:
+        if not current or current.get("userId") != user_id:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-        duplicated = await self.repository.get_by_document(payload.numeroDocumento)
+        duplicated = await self.repository.get_by_document(payload.numeroDocumento, user_id)
         if duplicated and duplicated["id"] != client_id:
-            raise HTTPException(status_code=409, detail="Documento ya registrado")
-
+            raise HTTPException(status_code=409, detail="Cliente ya registrado con ese documento")
         updated = touch_updated_at({**current, **payload.model_dump()})
         saved = await self.repository.update(client_id, updated)
         return ClienteResponse(**saved)

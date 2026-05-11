@@ -10,22 +10,22 @@ router = APIRouter(prefix="/proveedores", tags=["proveedores"])
 
 
 @router.get("", response_model=list[ProveedorResponse])
-async def list_proveedores(_: UserResponse = Depends(get_current_user)):
-    return await proveedor_service.list_all()
+async def list_proveedores(current_user: UserResponse = Depends(get_current_user)):
+    return await proveedor_service.list_all(current_user.id)
 
 
 @router.post("", response_model=ProveedorResponse)
 async def create_proveedor(
     payload: ProveedorCreate,
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    return await proveedor_service.create(payload)
+    return await proveedor_service.create(payload, current_user.id)
 
 
 @router.put("/{proveedor_id}", response_model=ProveedorResponse)
 async def update_proveedor(
     proveedor_id: str,
     payload: ProveedorUpdate,
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    return await proveedor_service.update(proveedor_id, payload)
+    return await proveedor_service.update(proveedor_id, payload, current_user.id)

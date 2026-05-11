@@ -1,9 +1,10 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.security import create_access_token, decode_access_token, verify_password
-from app.modules.auth.domain.models import AuthResponse, LoginRequest, UserResponse
+from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
+from app.modules.auth.domain.models import AuthResponse, LoginRequest, RegisterRequest, UserResponse
 from app.modules.auth.infrastructure.repository import AuthRepository
+from app.shared.common import generate_id, utc_now_iso
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -20,6 +21,31 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Credenciales inválidas",
             )
+
+        access_token = create_access_token(user["id"])
+        return AuthResponse(token=access_token, user=UserResponse(**self._sanitize(user)))
+
+    async def register(self, payload: RegisterRequest) -> AuthResponse:
+        existing = await self.repository.get_by_email(payload.email.lower())
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ya existe una cuenta registrada con este correo electrónico",
+            )
+
+        now = utc_now_iso()
+        user = {
+            "id": f"usr-{generate_id()}",
+            "nombreCompleto": payload.nombreCompleto.strip(),
+            "email": payload.email.lower(),
+            "passwordHash": hash_password(payload.password),
+            "rol": "ARQUITECTA_ADMIN",
+            "estado": "ACTIVO",
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+        await self.repository.insert_one(user)
 
         access_token = create_access_token(user["id"])
         return AuthResponse(token=access_token, user=UserResponse(**self._sanitize(user)))

@@ -9,23 +9,23 @@ class MaterialService:
     def __init__(self, repository: MaterialRepository):
         self.repository = repository
 
-    async def list_all(self) -> list[MaterialResponse]:
-        return [MaterialResponse(**item) for item in await self.repository.list_all()]
+    async def list_all(self, user_id: str) -> list[MaterialResponse]:
+        return [MaterialResponse(**item) for item in await self.repository.list_all(user_id)]
 
-    async def create(self, payload: MaterialCreate) -> MaterialResponse:
-        existing = await self.repository.get_by_code(payload.codigoMaterial)
+    async def create(self, payload: MaterialCreate, user_id: str) -> MaterialResponse:
+        existing = await self.repository.get_by_code(payload.codigoMaterial, user_id)
         if existing:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Código de material ya registrado")
-        material = {**payload.model_dump(), **create_audit_fields()}
-        created = await self.repository.create(material)
+        data = {**payload.model_dump(), **create_audit_fields(), "userId": user_id}
+        created = await self.repository.create(data)
         return MaterialResponse(**created)
 
-    async def update(self, material_id: str, payload: MaterialUpdate) -> MaterialResponse:
+    async def update(self, material_id: str, payload: MaterialUpdate, user_id: str) -> MaterialResponse:
         current = await self.repository.get_by_id(material_id)
-        if not current:
+        if not current or current.get("userId") != user_id:
             raise HTTPException(status_code=404, detail="Material no encontrado")
-        existing = await self.repository.get_by_code(payload.codigoMaterial)
-        if existing and existing["id"] != material_id:
+        duplicated = await self.repository.get_by_code(payload.codigoMaterial, user_id)
+        if duplicated and duplicated["id"] != material_id:
             raise HTTPException(status_code=409, detail="Código de material ya registrado")
         updated = touch_updated_at({**current, **payload.model_dump()})
         saved = await self.repository.update(material_id, updated)

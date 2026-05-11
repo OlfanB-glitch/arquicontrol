@@ -14,6 +14,7 @@ import EntityPage from "@/pages/EntityPage";
 import FeedPage from "@/pages/FeedPage";
 import AuditLogPage from "@/pages/AuditLogPage";
 import LoginPage from "@/pages/LoginPage";
+import RegisterPage from "@/pages/RegisterPage";
 import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import ProjectsPage from "@/pages/ProjectsPage";
 
@@ -35,10 +36,10 @@ function ProtectedLayout() {
   );
 }
 
-function PublicRoute() {
+function PublicRoute({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
   if (isLoading) return null;
-  return isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />;
+  return isAuthenticated ? <Navigate to="/dashboard" replace /> : children;
 }
 
 function App() {
@@ -48,7 +49,8 @@ function App() {
         <AuthProvider>
           <BrowserRouter>
             <Routes>
-              <Route path="/login" element={<PublicRoute />} />
+              <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+              <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
               <Route path="/" element={<ProtectedLayout />}>
                 <Route index element={<Navigate to="/dashboard" replace />} />
                 <Route path="dashboard" element={<DashboardPage />} />

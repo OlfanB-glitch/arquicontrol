@@ -10,22 +10,22 @@ router = APIRouter(prefix="/materiales", tags=["materiales"])
 
 
 @router.get("", response_model=list[MaterialResponse])
-async def list_materiales(_: UserResponse = Depends(get_current_user)):
-    return await material_service.list_all()
+async def list_materiales(current_user: UserResponse = Depends(get_current_user)):
+    return await material_service.list_all(current_user.id)
 
 
 @router.post("", response_model=MaterialResponse)
 async def create_material(
     payload: MaterialCreate,
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    return await material_service.create(payload)
+    return await material_service.create(payload, current_user.id)
 
 
 @router.put("/{material_id}", response_model=MaterialResponse)
 async def update_material(
     material_id: str,
     payload: MaterialUpdate,
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    return await material_service.update(material_id, payload)
+    return await material_service.update(material_id, payload, current_user.id)

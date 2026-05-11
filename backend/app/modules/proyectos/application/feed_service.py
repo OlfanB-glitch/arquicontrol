@@ -29,9 +29,9 @@ class FeedService:
         return {item["id"]: item["nombreCompleto"] for item in clients}
 
     async def get_payments_feed(
-        self, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None,
+        self, user_id: str | None = None, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None,
     ) -> list[dict]:
-        projects = await self.repository.list_all()
+        projects = await self.repository.list_all(user_id)
         client_names = await self._client_name_map()
         payments = []
         for project in projects:
@@ -60,9 +60,9 @@ class FeedService:
         return payments[:50]
 
     async def get_purchases_feed(
-        self, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None,
+        self, user_id: str | None = None, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None,
     ) -> list[dict]:
-        projects = await self.repository.list_all()
+        projects = await self.repository.list_all(user_id)
         client_names = await self._client_name_map()
         purchases = []
         for project in projects:
@@ -91,9 +91,9 @@ class FeedService:
         return purchases[:50]
 
     async def get_documents_feed(
-        self, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None,
+        self, user_id: str | None = None, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None,
     ) -> list[dict]:
-        projects = await self.repository.list_all()
+        projects = await self.repository.list_all(user_id)
         client_names = await self._client_name_map()
         documents = []
         for project in projects:
@@ -128,33 +128,70 @@ class FeedService:
 
     async def get_bitacora(
         self, project_id: str, fecha_desde=None, fecha_hasta=None, tipo_evento=None, usuario=None,
+        user_id=None,
     ) -> list[dict]:
+        """Bitácora de un proyecto específico — usa pipeline de agregación de MongoDB."""
         from fastapi import HTTPException
-        project = await self.repository.get_by_id(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
-        normalized = normalize_project(project)
-        bitacora = normalized.get("bitacora", [])
-        filtered = []
-        for event in bitacora:
-            if not matches_bitacora_filters(event, fecha_desde, fecha_hasta, tipo_evento, usuario):
-                continue
-            filtered.append(enrich_bitacora_event(normalized, event))
-        return filtered
+
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Sesión requerida")
+
+        results = await self.repository.aggregate_project_bitacora(
+            project_id=project_id,
+            user_id=user_id,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            tipo_evento=tipo_evento,
+            usuario=usuario,
+        )
+
+        if not results:
+            # Verificar si el proyecto existe (para dar 404 correcto)
+            project = await self.repository.get_by_id(project_id, user_id)
+            if not project:
+                raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+        # Enriquecer cada evento con los datos del proyecto
+        return [
+            {
+                **item["event"],
+                "projectId": item["projectId"],
+                "projectName": item["projectName"],
+                "codigoProyecto": item["codigoProyecto"],
+                "tipoEvento": item["event"].get("tipoEvento") or item["event"].get("evento"),
+                "usuario": item["event"].get("usuario") or item["event"].get("actor"),
+                "actor": item["event"].get("actor") or item["event"].get("usuario"),
+                "accion": item["event"].get("tipoEvento") or item["event"].get("evento"),
+                "resumenCambio": item["event"].get("detalle") or "Sin resumen disponible",
+            }
+            for item in results
+        ]
 
     async def list_bitacora(
-        self, fecha_desde=None, fecha_hasta=None, tipo_evento=None, usuario=None, proyecto_id=None,
+        self, fecha_desde=None, fecha_hasta=None, tipo_evento=None, usuario=None, proyecto_id=None, user_id=None,
     ) -> list[dict]:
-        projects = await self.repository.list_all()
-        project_filter = str(proyecto_id or "").strip().lower()
-        events = []
-        for project in projects:
-            normalized = normalize_project(project)
-            if project_filter and not matches_project_reference(normalized, project_filter):
-                continue
-            for event in normalized.get("bitacora", []):
-                if not matches_bitacora_filters(event, fecha_desde, fecha_hasta, tipo_evento, usuario):
-                    continue
-                events.append(enrich_bitacora_event(normalized, event))
-        events.sort(key=lambda item: item.get("fecha", ""), reverse=True)
-        return events[:250]
+        """Bitácora global de todos los proyectos — usa pipeline de agregación de MongoDB."""
+        results = await self.repository.aggregate_global_bitacora(
+            user_id=user_id or "",
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            tipo_evento=tipo_evento,
+            usuario=usuario,
+            proyecto_id=proyecto_id,
+        )
+
+        # Enriquecer cada evento con los datos del proyecto
+        return [
+            {
+                **item["event"],
+                "projectId": item["projectId"],
+                "projectName": item["projectName"],
+                "codigoProyecto": item["codigoProyecto"],
+                "tipoEvento": item["event"].get("tipoEvento") or item["event"].get("evento"),
+                "usuario": item["event"].get("usuario") or item["event"].get("actor"),
+                "actor": item["event"].get("actor") or item["event"].get("usuario"),
+                "accion": item["event"].get("tipoEvento") or item["event"].get("evento"),
+                "resumenCambio": item["event"].get("detalle") or "Sin resumen disponible",
+            }
+            for item in results
+        ]

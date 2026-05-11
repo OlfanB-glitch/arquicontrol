@@ -10,22 +10,22 @@ router = APIRouter(prefix="/clientes", tags=["clientes"])
 
 
 @router.get("", response_model=list[ClienteResponse])
-async def list_clientes(_: UserResponse = Depends(get_current_user)):
-    return await cliente_service.list_all()
+async def list_clientes(current_user: UserResponse = Depends(get_current_user)):
+    return await cliente_service.list_all(current_user.id)
 
 
 @router.post("", response_model=ClienteResponse)
 async def create_cliente(
     payload: ClienteCreate,
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    return await cliente_service.create(payload)
+    return await cliente_service.create(payload, current_user.id)
 
 
 @router.put("/{client_id}", response_model=ClienteResponse)
 async def update_cliente(
     client_id: str,
     payload: ClienteUpdate,
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    return await cliente_service.update(client_id, payload)
+    return await cliente_service.update(client_id, payload, current_user.id)

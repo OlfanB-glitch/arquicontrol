@@ -113,9 +113,9 @@ class ProyectoService:
     #  Consultas
     # ------------------------------------------------------------------ #
 
-    async def list_all(self, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None) -> list[ProyectoResponse]:
+    async def list_all(self, user_id: str, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None) -> list[ProyectoResponse]:
         client_names = await self._client_name_map()
-        projects = await self.repository.list_all()
+        projects = await self.repository.list_all(user_id)
         filtered = []
         for project in projects:
             normalized = normalize_project(project)
@@ -125,8 +125,8 @@ class ProyectoService:
             filtered.append(ProyectoResponse(**serialize_project(normalized)))
         return filtered
 
-    async def get_by_id(self, project_id: str, include_inactive: bool = False) -> ProyectoResponse:
-        project = await self.repository.get_by_id(project_id)
+    async def get_by_id(self, project_id: str, include_inactive: bool = False, user_id: str | None = None) -> ProyectoResponse:
+        project = await self.repository.get_by_id(project_id, user_id)
         if not project:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
         normalized = normalize_project(project)
@@ -137,20 +137,20 @@ class ProyectoService:
     #  Bitácora y feeds (delegados a FeedService)
     # ------------------------------------------------------------------ #
 
-    async def get_bitacora(self, project_id, fecha_desde=None, fecha_hasta=None, tipo_evento=None, usuario=None):
-        return await self.feed_service.get_bitacora(project_id, fecha_desde, fecha_hasta, tipo_evento, usuario)
+    async def get_bitacora(self, project_id, fecha_desde=None, fecha_hasta=None, tipo_evento=None, usuario=None, user_id=None):
+        return await self.feed_service.get_bitacora(project_id, fecha_desde, fecha_hasta, tipo_evento, usuario, user_id=user_id)
 
-    async def list_bitacora(self, fecha_desde=None, fecha_hasta=None, tipo_evento=None, usuario=None, proyecto_id=None):
-        return await self.feed_service.list_bitacora(fecha_desde, fecha_hasta, tipo_evento, usuario, proyecto_id)
+    async def list_bitacora(self, user_id=None, fecha_desde=None, fecha_hasta=None, tipo_evento=None, usuario=None, proyecto_id=None):
+        return await self.feed_service.list_bitacora(fecha_desde, fecha_hasta, tipo_evento, usuario, proyecto_id, user_id=user_id)
 
-    async def get_payments_feed(self, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None):
-        return await self.feed_service.get_payments_feed(q, estado, cliente_id, fecha_desde, fecha_hasta, monto_min, monto_max)
+    async def get_payments_feed(self, user_id=None, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None):
+        return await self.feed_service.get_payments_feed(user_id=user_id, q=q, estado=estado, cliente_id=cliente_id, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, monto_min=monto_min, monto_max=monto_max)
 
-    async def get_purchases_feed(self, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None):
-        return await self.feed_service.get_purchases_feed(q, estado, cliente_id, fecha_desde, fecha_hasta, monto_min, monto_max)
+    async def get_purchases_feed(self, user_id=None, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None):
+        return await self.feed_service.get_purchases_feed(user_id=user_id, q=q, estado=estado, cliente_id=cliente_id, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, monto_min=monto_min, monto_max=monto_max)
 
-    async def get_documents_feed(self, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None):
-        return await self.feed_service.get_documents_feed(q, estado, cliente_id, fecha_desde, fecha_hasta, monto_min, monto_max)
+    async def get_documents_feed(self, user_id=None, q=None, estado=None, cliente_id=None, fecha_desde=None, fecha_hasta=None, monto_min=None, monto_max=None):
+        return await self.feed_service.get_documents_feed(user_id=user_id, q=q, estado=estado, cliente_id=cliente_id, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, monto_min=monto_min, monto_max=monto_max)
 
     # ------------------------------------------------------------------ #
     #  Reportes (delegados a ReportService)
@@ -176,7 +176,7 @@ class ProyectoService:
     #  CRUD del agregado raíz
     # ------------------------------------------------------------------ #
 
-    async def create(self, payload: ProyectoCreate, actor: str) -> ProyectoResponse:
+    async def create(self, payload: ProyectoCreate, actor: str, actor_user_id: str = "") -> ProyectoResponse:
         await self._validate_project_base(payload)
         existing = await self.repository.get_by_code(payload.codigoProyecto)
         if existing:
@@ -186,7 +186,7 @@ class ProyectoService:
             **create_audit_fields(),
             "fases": [create_phase_record(fase.model_dump()) for fase in payload.fases],
             "seguimientos": [], "pagos": [], "contratistasAsignados": [],
-            "compras": [], "documentos": [], "resumenFinanciero": {},
+            "compras": [], "documentos": [], "resumenFinanciero": {}, "userId": actor_user_id,
             "bitacora": [], "alertas": [], "indicadores": {},
         }
         recalculate_project(project, self.avance_resolver)
@@ -195,8 +195,8 @@ class ProyectoService:
         created = await self.repository.create(project)
         return ProyectoResponse(**serialize_project(created))
 
-    async def update(self, project_id: str, payload: ProyectoUpdate, actor: str) -> ProyectoResponse:
-        current = await self._get_mutable_project(project_id)
+    async def update(self, project_id: str, payload: ProyectoUpdate, actor: str, user_id: str = "") -> ProyectoResponse:
+        current = await self._get_mutable_project(project_id, user_id)
         await self._validate_project_base(payload, current_project_id=project_id)
         existing = await self.repository.get_by_code(payload.codigoProyecto)
         if existing and existing["id"] != project_id:
@@ -223,16 +223,16 @@ class ProyectoService:
     #  Subdocumentos: fases
     # ------------------------------------------------------------------ #
 
-    async def update_phase(self, project_id: str, phase_id: str, payload: FaseUpdate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def update_phase(self, project_id: str, phase_id: str, payload: FaseUpdate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         validate_date_order(payload.fechaInicio, payload.fechaFinEstimada, "fase")
         phase = require_phase(project, phase_id)
         phase.update(payload.model_dump())
         phase["updatedAt"] = utc_now_iso()
         return await self._save_and_notify(project, project_id, f"fase:{phase_id}", "FASE_ACTUALIZADA", actor)
 
-    async def delete_phase(self, project_id: str, phase_id: str, payload: DeleteEmbeddedRequest, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def delete_phase(self, project_id: str, phase_id: str, payload: DeleteEmbeddedRequest, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         phase = require_phase(project, phase_id)
         if any(item.get("faseId") == phase_id and item.get("isActive", True) for item in project.get("seguimientos", [])):
             raise HTTPException(status_code=409, detail="No se puede eliminar la fase con seguimientos activos")
@@ -245,22 +245,22 @@ class ProyectoService:
     #  Subdocumentos: seguimientos
     # ------------------------------------------------------------------ #
 
-    async def add_tracking(self, project_id: str, payload: SeguimientoCreate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def add_tracking(self, project_id: str, payload: SeguimientoCreate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         require_phase(project, payload.faseId)
         tracking = build_tracking_record(payload.model_dump())
         project.setdefault("seguimientos", []).insert(0, tracking)
         return await self._save_and_notify(project, project_id, f"seguimiento:{tracking['id']}", "SEGUIMIENTO_REGISTRADO", actor)
 
-    async def update_tracking(self, project_id: str, tracking_id: str, payload: SeguimientoUpdate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def update_tracking(self, project_id: str, tracking_id: str, payload: SeguimientoUpdate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         require_phase(project, payload.faseId)
         tracking = require_tracking(project, tracking_id)
         tracking.update({**payload.model_dump(exclude={"evidencias"}), "evidencias": build_tracking_evidences(payload.evidencias), "updatedAt": utc_now_iso()})
         return await self._save_and_notify(project, project_id, f"seguimiento:{tracking_id}", "SEGUIMIENTO_ACTUALIZADO", actor)
 
-    async def delete_tracking(self, project_id: str, tracking_id: str, payload: DeleteEmbeddedRequest, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def delete_tracking(self, project_id: str, tracking_id: str, payload: DeleteEmbeddedRequest, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         tracking = require_tracking(project, tracking_id)
         mark_logical_delete(tracking, actor, payload.motivo)
         for evidence in tracking.get("evidencias", []):
@@ -271,16 +271,16 @@ class ProyectoService:
     #  Subdocumentos: pagos
     # ------------------------------------------------------------------ #
 
-    async def add_payment(self, project_id: str, payload: PagoCreate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def add_payment(self, project_id: str, payload: PagoCreate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         if payload.faseId:
             require_phase(project, payload.faseId)
         payment = self._build_payment_record(payload)
         project.setdefault("pagos", []).insert(0, payment)
         return await self._save_and_notify(project, project_id, f"pago:{payment['idPago']}", "PAGO_REGISTRADO", actor)
 
-    async def update_payment(self, project_id: str, payment_id: str, payload: PagoUpdate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def update_payment(self, project_id: str, payment_id: str, payload: PagoUpdate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         payment = require_payment(project, payment_id)
         if payload.faseId:
             require_phase(project, payload.faseId)
@@ -291,8 +291,8 @@ class ProyectoService:
                 break
         return await self._save_and_notify(project, project_id, f"pago:{payment_id}", "PAGO_ACTUALIZADO", actor)
 
-    async def delete_payment(self, project_id: str, payment_id: str, payload: DeleteEmbeddedRequest, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def delete_payment(self, project_id: str, payment_id: str, payload: DeleteEmbeddedRequest, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         payment = require_payment(project, payment_id)
         mark_logical_delete(payment, actor, payload.motivo)
         return await self._save_and_notify(project, project_id, f"pago:{payment_id}", "PAGO_ELIMINADO_LOGICAMENTE", actor, reason=payload.motivo)
@@ -301,8 +301,8 @@ class ProyectoService:
     #  Subdocumentos: contratistas
     # ------------------------------------------------------------------ #
 
-    async def add_contractor_assignment(self, project_id: str, payload: AsignacionContratistaCreate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def add_contractor_assignment(self, project_id: str, payload: AsignacionContratistaCreate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         contractor = await self.contratista_repository.get_by_id(payload.contratistaId)
         if not contractor:
             raise HTTPException(status_code=404, detail="Contratista no encontrado")
@@ -311,8 +311,8 @@ class ProyectoService:
         project.setdefault("contratistasAsignados", []).append(assignment)
         return await self._save_and_notify(project, project_id, f"contratista:{assignment['idAsignacion']}", "CONTRATISTA_ASIGNADO", actor)
 
-    async def update_assignment(self, project_id: str, assignment_id: str, payload: AsignacionContratistaUpdate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def update_assignment(self, project_id: str, assignment_id: str, payload: AsignacionContratistaUpdate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         assignment = require_assignment(project, assignment_id)
         contractor = await self.contratista_repository.get_by_id(payload.contratistaId)
         if not contractor:
@@ -322,22 +322,22 @@ class ProyectoService:
         assignment["updatedAt"] = utc_now_iso()
         return await self._save_and_notify(project, project_id, f"contratista:{assignment_id}", "ASIGNACION_CONTRATISTA_ACTUALIZADA", actor)
 
-    async def delete_assignment(self, project_id: str, assignment_id: str, payload: DeleteEmbeddedRequest, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def delete_assignment(self, project_id: str, assignment_id: str, payload: DeleteEmbeddedRequest, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         assignment = require_assignment(project, assignment_id)
         if assignment.get("avances") or assignment.get("pagosContratista"):
             raise HTTPException(status_code=409, detail="No se puede eliminar la asignación con avances o pagos de contratista registrados")
         mark_logical_delete(assignment, actor, payload.motivo, estado_inactivo="SUSPENDIDA")
         return await self._save_and_notify(project, project_id, f"contratista:{assignment_id}", "ASIGNACION_CONTRATISTA_ELIMINADA_LOGICAMENTE", actor, reason=payload.motivo)
 
-    async def add_contractor_progress(self, project_id: str, assignment_id: str, payload: AvanceContratistaCreate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def add_contractor_progress(self, project_id: str, assignment_id: str, payload: AvanceContratistaCreate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         assignment = require_assignment(project, assignment_id)
         assignment.setdefault("avances", []).insert(0, {"id": generate_id(), **payload.model_dump()})
         return await self._save_and_notify(project, project_id, f"avance_contratista:{assignment_id}", "AVANCE_CONTRATISTA_REGISTRADO", actor)
 
-    async def add_contractor_payment(self, project_id: str, assignment_id: str, payload: PagoContratistaCreate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def add_contractor_payment(self, project_id: str, assignment_id: str, payload: PagoContratistaCreate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         assignment = require_assignment(project, assignment_id)
         assignment.setdefault("pagosContratista", []).insert(0, {"id": generate_id(), **payload.model_dump()})
         return await self._save_and_notify(project, project_id, f"pago_contratista:{assignment_id}", "PAGO_CONTRATISTA_REGISTRADO", actor)
@@ -346,14 +346,14 @@ class ProyectoService:
     #  Subdocumentos: compras
     # ------------------------------------------------------------------ #
 
-    async def add_purchase(self, project_id: str, payload: CompraCreate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def add_purchase(self, project_id: str, payload: CompraCreate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         purchase = await self._build_purchase_record(payload)
         project.setdefault("compras", []).insert(0, purchase)
         return await self._save_and_notify(project, project_id, f"compra:{purchase['idCompra']}", "COMPRA_REGISTRADA", actor)
 
-    async def update_purchase(self, project_id: str, purchase_id: str, payload: CompraUpdate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def update_purchase(self, project_id: str, purchase_id: str, payload: CompraUpdate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         purchase = require_purchase(project, purchase_id)
         updated_purchase = await self._build_purchase_record(payload, existing_purchase=purchase)
         for index, item in enumerate(project.get("compras", [])):
@@ -362,8 +362,8 @@ class ProyectoService:
                 break
         return await self._save_and_notify(project, project_id, f"compra:{purchase_id}", "COMPRA_ACTUALIZADA", actor)
 
-    async def delete_purchase(self, project_id: str, purchase_id: str, payload: DeleteEmbeddedRequest, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def delete_purchase(self, project_id: str, purchase_id: str, payload: DeleteEmbeddedRequest, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         purchase = require_purchase(project, purchase_id)
         mark_logical_delete(purchase, actor, payload.motivo)
         return await self._save_and_notify(project, project_id, f"compra:{purchase_id}", "COMPRA_ELIMINADA_LOGICAMENTE", actor, reason=payload.motivo)
@@ -372,14 +372,14 @@ class ProyectoService:
     #  Subdocumentos: documentos
     # ------------------------------------------------------------------ #
 
-    async def add_document_url(self, project_id: str, payload: DocumentoUrlCreate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def add_document_url(self, project_id: str, payload: DocumentoUrlCreate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         document = build_document_entry(name=payload.nombre, url=payload.url, document_type=payload.tipo, source="URL", seguimiento_id=payload.seguimientoId, observations=payload.observaciones)
         attach_document(project, document)
         return await self._save_and_notify(project, project_id, f"documento:{document['id']}", "DOCUMENTO_REGISTRADO", actor)
 
-    async def update_document(self, project_id: str, document_id: str, payload: DocumentoUpdate, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def update_document(self, project_id: str, document_id: str, payload: DocumentoUpdate, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         found = require_document(project, document_id)
         document = found["document"]
         if payload.seguimientoId:
@@ -389,14 +389,14 @@ class ProyectoService:
         attach_document(project, updated_document)
         return await self._save_and_notify(project, project_id, f"documento:{document_id}", "DOCUMENTO_ACTUALIZADO", actor)
 
-    async def delete_document(self, project_id: str, document_id: str, payload: DeleteEmbeddedRequest, actor: str) -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+    async def delete_document(self, project_id: str, document_id: str, payload: DeleteEmbeddedRequest, actor: str, user_id: str = "") -> ProyectoResponse:
+        project = await self._get_mutable_project(project_id, user_id)
         found = require_document(project, document_id)
         mark_logical_delete(found["document"], actor, payload.motivo)
         return await self._save_and_notify(project, project_id, f"documento:{document_id}", "DOCUMENTO_ELIMINADO_LOGICAMENTE", actor, reason=payload.motivo)
 
     async def add_document_upload(self, project_id: str, file: UploadFile, document_type: str, actor: str, seguimiento_id: str | None = None, observations: str = "") -> ProyectoResponse:
-        project = await self._get_mutable_project(project_id)
+        project = await self._get_mutable_project(project_id, user_id)
         if seguimiento_id:
             require_tracking(project, seguimiento_id)
         if not file.filename:
@@ -430,8 +430,8 @@ class ProyectoService:
         saved = await self.repository.replace(project_id, project)
         return ProyectoResponse(**serialize_project(saved))
 
-    async def _get_mutable_project(self, project_id: str) -> dict:
-        project = await self.repository.get_by_id(project_id)
+    async def _get_mutable_project(self, project_id: str, user_id: str | None = None) -> dict:
+        project = await self.repository.get_by_id(project_id, user_id)
         if not project:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
         return normalize_project(project)
