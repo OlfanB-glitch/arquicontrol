@@ -26,3 +26,53 @@ class ProveedorRepository(IProveedorRepository):
     async def update(self, proveedor_id: str, data: dict) -> dict | None:
         await self.collection.update_one({"id": proveedor_id}, {"$set": data})
         return await self.get_by_id(proveedor_id)
+
+    async def aggregate_stats(self, user_id: str) -> dict:
+        """
+        Pipeline de estadísticas de proveedores usando:
+          $addFields — agrega campo calculado de longitud del nombre
+          $facet     — múltiples sub-pipelines en paralelo
+          $count     — conteo de proveedores activos
+        """
+        pipeline = [
+            {"$match": {"userId": user_id}},
+
+            # $addFields: enriquece cada documento con campos derivados
+            {"$addFields": {
+                "tieneObservaciones": {
+                    "$and": [
+                        {"$ne": ["$observaciones", None]},
+                        {"$ne": ["$observaciones", ""]},
+                    ]
+                },
+                "nombreLargo": {"$gt": [{"$strLenCP": "$nombre"}, 20]},
+            }},
+
+            # $facet: múltiples análisis en una sola pasada
+            {"$facet": {
+
+                # Sub-pipeline A: conteo por estado con $count
+                "porEstado": [
+                    {"$group": {"_id": "$estado", "total": {"$sum": 1}}},
+                ],
+
+                # Sub-pipeline B: solo activos
+                "activos": [
+                    {"$match": {"estado": "ACTIVO"}},
+                    {"$count": "totalActivos"},
+                ],
+
+                # Sub-pipeline C: con observaciones
+                "conObservaciones": [
+                    {"$match": {"tieneObservaciones": True}},
+                    {"$count": "cantidad"},
+                ],
+
+                # Sub-pipeline D: total de proveedores
+                "totales": [
+                    {"$count": "totalProveedores"},
+                ],
+            }},
+        ]
+        results = await self.collection.aggregate(pipeline).to_list(1)
+        return results[0] if results else {}

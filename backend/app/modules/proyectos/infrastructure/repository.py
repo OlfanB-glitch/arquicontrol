@@ -196,3 +196,102 @@ class ProyectoRepository(IProyectoRepository):
             {"$limit": 250},
         ])
         return await self.collection.aggregate(pipeline).to_list(250)
+    async def aggregate_dashboard_stats(self, user_id: str) -> dict:
+        """
+        Pipeline avanzado para el dashboard que usa cuatro stages nuevos:
+
+          $addFields  — calcula saldoPendiente como campo derivado
+          $facet      — ejecuta múltiples sub-pipelines en paralelo
+          $count      — cuenta documentos dentro de cada faceta
+          $bucket     — agrupa proyectos por rango de valor de contrato
+
+        Retorna en una sola query: conteo por estado, total financiero,
+        distribución por rango de contrato y conteo por tipo de proyecto.
+        """
+        pipeline = [
+            # 1. Filtrar por usuario (multi-tenant)
+            {"$match": {"userId": user_id}},
+
+            # 2. $addFields — agrega campos calculados al vuelo sin modificar la BD
+            {"$addFields": {
+                "saldoPendienteCalculado": {
+                    "$max": [
+                        {"$subtract": [
+                            {"$ifNull": ["$valorContrato", 0]},
+                            {"$ifNull": ["$resumenFinanciero.totalPagadoCliente", 0]},
+                        ]},
+                        0,
+                    ]
+                },
+                "estaAtrasado": {
+                    "$and": [
+                        {"$lt": ["$fechaFinEstimada", {"$dateToString": {"format": "%Y-%m-%d", "date": "$$NOW"}}]},
+                        {"$in": ["$estadoProyecto", ["EN_EJECUCION", "EN_DISENO"]]},
+                    ]
+                },
+                "totalPagadoCliente": {"$ifNull": ["$resumenFinanciero.totalPagadoCliente", 0]},
+                "costoEjecutado": {"$ifNull": ["$resumenFinanciero.costoTotalEjecutado", 0]},
+            }},
+
+            # 3. $facet — ejecuta cuatro sub-pipelines en paralelo con una sola pasada
+            {"$facet": {
+
+                # Faceta A: conteo por estado usando $count
+                "porEstado": [
+                    {"$group": {
+                        "_id": "$estadoProyecto",
+                        "total": {"$sum": 1},
+                        "avancePromedio": {"$avg": "$porcentajeAvanceGeneral"},
+                    }},
+                    {"$sort": {"total": -1}},
+                ],
+
+                # Faceta B: resumen financiero global
+                "resumenFinanciero": [
+                    {"$group": {
+                        "_id": None,
+                        "totalProyectos": {"$sum": 1},        # $count implícito
+                        "valorTotalContratos": {"$sum": "$valorContrato"},
+                        "totalPagadoClientes": {"$sum": "$totalPagadoCliente"},
+                        "totalSaldoPendiente": {"$sum": "$saldoPendienteCalculado"},
+                        "totalCostoEjecutado": {"$sum": "$costoEjecutado"},
+                    }},
+                ],
+
+                # Faceta C: $bucket — agrupa proyectos por rango de valor de contrato
+                "distribucionPorContrato": [
+                    {"$bucket": {
+                        "groupBy": "$valorContrato",
+                        "boundaries": [0, 50_000_000, 150_000_000, 300_000_000, 600_000_000],
+                        "default": "Más de 600M",
+                        "output": {
+                            "cantidad": {"$sum": 1},
+                            "valorTotal": {"$sum": "$valorContrato"},
+                            "proyectos": {"$push": "$nombreProyecto"},
+                        },
+                    }},
+                ],
+
+                # Faceta D: conteo por tipo de proyecto
+                "porTipo": [
+                    {"$group": {"_id": "$tipoProyecto", "cantidad": {"$sum": 1}}},
+                    {"$sort": {"cantidad": -1}},
+                ],
+
+                # Faceta E: proyectos atrasados usando el campo calculado con $addFields
+                "atrasados": [
+                    {"$match": {"estaAtrasado": True}},
+                    {"$project": {
+                        "_id": 0,
+                        "id": 1,
+                        "codigoProyecto": 1,
+                        "nombreProyecto": 1,
+                        "estadoProyecto": 1,
+                        "fechaFinEstimada": 1,
+                    }},
+                ],
+            }},
+        ]
+
+        results = await self.collection.aggregate(pipeline).to_list(1)
+        return results[0] if results else {}

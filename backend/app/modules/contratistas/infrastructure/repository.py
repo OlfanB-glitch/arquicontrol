@@ -26,3 +26,68 @@ class ContratistaRepository(IContratistaRepository):
     async def update(self, contractor_id: str, data: dict) -> dict | None:
         await self.collection.update_one({"id": contractor_id}, {"$set": data})
         return await self.get_by_id(contractor_id)
+
+    async def aggregate_stats(self, user_id: str) -> dict:
+        """
+        Pipeline de estadísticas de contratistas usando:
+          $addFields — enriquece con campo de rango de tarifa
+          $bucket    — agrupa por rango de tarifa base
+          $facet     — múltiples sub-pipelines en paralelo
+        """
+        pipeline = [
+            {"$match": {"userId": user_id}},
+
+            # $addFields: clasifica al contratista según su tarifa
+            {"$addFields": {
+                "categoríaTarifa": {
+                    "$switch": {
+                        "branches": [
+                            {"case": {"$lt": ["$tarifaBase", 1_000_000]}, "then": "Básica"},
+                            {"case": {"$lt": ["$tarifaBase", 3_000_000]}, "then": "Media"},
+                            {"case": {"$lt": ["$tarifaBase", 6_000_000]}, "then": "Alta"},
+                        ],
+                        "default": "Premium",
+                    }
+                },
+                "especialidadNormalizada": {"$toLower": "$especialidad"},
+            }},
+
+            # $facet: múltiples análisis en paralelo
+            {"$facet": {
+
+                # Sub-pipeline A: $bucket por rango de tarifa
+                "distribucionTarifas": [
+                    {"$bucket": {
+                        "groupBy": "$tarifaBase",
+                        "boundaries": [0, 1_000_000, 3_000_000, 6_000_000, 10_000_000],
+                        "default": "Más de 10M",
+                        "output": {
+                            "cantidad": {"$sum": 1},
+                            "tarifaPromedio": {"$avg": "$tarifaBase"},
+                        },
+                    }},
+                ],
+
+                # Sub-pipeline B: por especialidad
+                "porEspecialidad": [
+                    {"$group": {
+                        "_id": "$especialidad",
+                        "total": {"$sum": 1},
+                        "tarifaPromedio": {"$avg": "$tarifaBase"},
+                    }},
+                    {"$sort": {"total": -1}},
+                ],
+
+                # Sub-pipeline C: por estado usando $count
+                "porEstado": [
+                    {"$group": {"_id": "$estado", "total": {"$sum": 1}}},
+                ],
+
+                # Sub-pipeline D: total general
+                "totales": [
+                    {"$count": "totalContratistas"},
+                ],
+            }},
+        ]
+        results = await self.collection.aggregate(pipeline).to_list(1)
+        return results[0] if results else {}
